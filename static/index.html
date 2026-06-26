@@ -155,6 +155,25 @@
   .ch-name { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ch-sub  { font-size: 11px; color: var(--muted); }
 
+  .notif-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 24px; height: 24px;
+    border-radius: 5px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    color: var(--muted);
+    transition: opacity .15s, color .15s, background .15s;
+  }
+  .channel-item:hover .notif-btn { opacity: 1; }
+  .notif-btn.on { opacity: 1; color: var(--amber); }
+  .notif-btn.on:hover { background: rgba(245,158,11,.12); }
+  .notif-btn:not(.on):hover { background: var(--bg3); color: var(--text); }
+
   /* ── Main chat area ── */
   main {
     flex: 1;
@@ -647,6 +666,13 @@ async function loadHistory() {
         }, true));
       }
     });
+    const channels = await fetch('/api/channels').then(r => r.json());
+    channels.forEach(ch => {
+      if (!channelState[ch.channel_id])
+        channelState[ch.channel_id] = { title: ch.title, isLive: false };
+    });
+    renderChannels();
+
     const live = await fetch('/api/live').then(r => r.json());
     live.forEach(s => {
       updateChannelItem(s.channel_id, s.channel_title, true);
@@ -676,6 +702,32 @@ function handleEvent(ev) {
     }
     case 'summary_ready': {
       pushMsg(buildSummaryMsg(ev.session, ev.summary));
+      showNotif(
+        ev.session.channel_id,
+        `📺 ${ev.session.channel_title} — 라이브 요약`,
+        ev.summary.one_liner || '라이브 요약이 완료됐습니다.',
+      );
+      break;
+    }
+    case 'video_summary_ready': {
+      if (ev.summary) pushMsg(buildSummaryMsg(ev.video, ev.summary));
+      showNotif(
+        ev.video.channel_id,
+        `🎬 ${ev.video.channel_title}`,
+        ev.summary?.one_liner || ev.video.title || '영상 요약이 완료됐습니다.',
+      );
+      break;
+    }
+    case 'channel_added': {
+      if (!channelState[ev.channel_id]) {
+        channelState[ev.channel_id] = { title: ev.title, isLive: false };
+        renderChannels();
+      }
+      break;
+    }
+    case 'channel_removed': {
+      delete channelState[ev.channel_id];
+      renderChannels();
       break;
     }
   }
@@ -826,15 +878,19 @@ function renderChannels() {
     const item = document.createElement('div');
     item.className = 'channel-item';
     const initials = (ch.title||'?').slice(0,2).toUpperCase();
+    const on = getNotifPref(id);
     item.innerHTML = `
       <div class="ch-avatar${ch.isLive ? ' is-live' : ''}">
         ${initials}
         <div class="live-badge"></div>
       </div>
-      <div>
+      <div style="flex:1;min-width:0">
         <div class="ch-name">${esc(ch.title)}</div>
         <div class="ch-sub">${ch.isLive ? '🔴 LIVE' : '대기 중'}</div>
       </div>
+      <button class="notif-btn${on ? ' on' : ''}"
+              title="${on ? '알림 끄기' : '알림 켜기'}"
+              onclick="event.stopPropagation();toggleNotif('${id}',this)">🔔</button>
     `;
     channelList.appendChild(item);
   });
@@ -1007,6 +1063,44 @@ async function saveSettings() {
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ── Notifications ── */
+function getNotifPref(channelId) {
+  return JSON.parse(localStorage.getItem('notif_prefs') || '{}')[channelId] === true;
+}
+function _saveNotifPref(channelId, val) {
+  const prefs = JSON.parse(localStorage.getItem('notif_prefs') || '{}');
+  prefs[channelId] = val;
+  localStorage.setItem('notif_prefs', JSON.stringify(prefs));
+}
+
+async function toggleNotif(channelId, btn) {
+  const current = getNotifPref(channelId);
+  if (!current) {
+    if (Notification.permission === 'default') {
+      const result = await Notification.requestPermission();
+      if (result !== 'granted') return;
+    }
+    if (Notification.permission !== 'granted') return;
+  }
+  const next = !current;
+  _saveNotifPref(channelId, next);
+  btn.classList.toggle('on', next);
+  btn.title = next ? '알림 끄기' : '알림 켜기';
+}
+
+let _activeNotif = null;
+let _notifTimer  = null;
+
+function showNotif(channelId, title, body) {
+  if (!getNotifPref(channelId)) return;
+  if (Notification.permission !== 'granted') return;
+  if (_activeNotif) { _activeNotif.close(); clearTimeout(_notifTimer); _activeNotif = null; }
+  _activeNotif = new Notification(title, { body, icon: '/favicon.ico' });
+  _activeNotif.onclick = () => { _activeNotif?.close(); _activeNotif = null; };
+  _activeNotif.onclose = () => { _activeNotif = null; };
+  _notifTimer = setTimeout(() => { _activeNotif?.close(); _activeNotif = null; }, 10000);
 }
 
 /* ── Boot ── */
