@@ -348,6 +348,78 @@ POLL_INTERVAL_SECONDS=300
 
 ---
 
+## Phase 12 · 채널별 브라우저 알림 (Web Notifications API)
+
+**요청:** 요약이 올라올 때마다 채널별로 알림 표시. 채널마다 on/off, 기본 off, 10초 자동 소멸, 쌓임 금지
+
+**변경 파일: `static/index.html`만 수정 (서버 변경 없음)**
+
+### CSS 추가 — `.notif-btn`
+```css
+.notif-btn {
+  margin-left: auto;
+  opacity: 0;           /* 기본 숨김 */
+  color: var(--muted);
+  ...
+}
+.channel-item:hover .notif-btn { opacity: 1; }    /* 호버 시 표시 */
+.notif-btn.on { opacity: 1; color: var(--amber); } /* ON이면 항상 표시 */
+```
+
+### `renderChannels()` 수정
+각 채널 항목 오른쪽에 🔔 버튼 추가:
+```html
+<button class="notif-btn [on]"
+        onclick="event.stopPropagation(); toggleNotif('channelId', this)">🔔</button>
+```
+`getNotifPref(id)` 로 현재 상태 읽어 `on` 클래스 초기화
+
+### 신규 JS 함수
+
+```javascript
+// localStorage 'notif_prefs' = { channelId: true/false }
+getNotifPref(channelId)         // 현재 채널 알림 설정 조회
+_saveNotifPref(channelId, val)  // 저장
+
+async toggleNotif(channelId, btn)
+  // OFF→ON 시 Notification.requestPermission() 호출
+  // 권한 거부 시 토글 취소
+  // on 클래스 + title 갱신
+
+let _activeNotif = null  // 단일 알림 참조
+let _notifTimer  = null
+
+showNotif(channelId, title, body)
+  // getNotifPref() false 이면 return
+  // 기존 _activeNotif?.close() + clearTimeout() 로 이전 알림 즉시 제거
+  // new Notification(title, { body, icon }) 생성
+  // setTimeout 10,000ms 후 자동 close
+```
+
+### `handleEvent()` 확장
+```javascript
+case 'summary_ready':
+  pushMsg(...)
+  showNotif(ev.session.channel_id, '📺 채널명 — 라이브 요약', one_liner)
+
+case 'video_summary_ready':
+  pushMsg(...)
+  showNotif(ev.video.channel_id, '🎬 채널명', one_liner || video.title)
+
+case 'channel_added':
+  channelState[ev.channel_id] = { title, isLive: false }
+  renderChannels()
+
+case 'channel_removed':
+  delete channelState[ev.channel_id]
+  renderChannels()
+```
+
+### `loadHistory()` 확장
+접속 시 `/api/channels` 호출 → 등록된 전체 채널 사이드바 선로드 (라이브 중이 아닌 채널도 벨 버튼 표시)
+
+---
+
 ## 최종 아키텍처 요약
 
 ```
