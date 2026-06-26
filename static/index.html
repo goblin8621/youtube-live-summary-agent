@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Live Summary Agent</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0f10;
+    --bg2: #1a1a1d;
+    --bg3: #25252a;
+    --surface: #1e1e22;
+    --border: rgba(255,255,255,0.08);
+    --text: #f0f0f2;
+    --muted: #8a8a96;
+    --red: #ff4444;
+    --green: #22c55e;
+    --blue: #3b82f6;
+    --amber: #f59e0b;
+    --purple: #a78bfa;
+    --pink: #ec4899;
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 10px; }
+
+  .logo {
+    width: 28px; height: 28px;
+    background: var(--red);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+
+  header h1 { font-size: 15px; font-weight: 600; color: var(--text); }
+  header p  { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+  .status-pills { display: flex; align-items: center; gap: 8px; }
+
+  .pill {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--muted);
+    transition: all 0.3s;
+  }
+  .pill.connected { color: var(--green); border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.08); }
+  .pill.live      { color: var(--red);   border-color: rgba(255,68,68,0.3);  background: rgba(255,68,68,0.08); }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .dot.pulse {
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .4; transform: scale(.7); }
+  }
+
+  /* ── Channel sidebar + Chat layout ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  aside {
+    width: 220px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .aside-title {
+    padding: 14px 16px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  #channel-list { overflow-y: auto; flex: 1; padding: 0 8px 8px; }
+
+  .channel-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .channel-item:hover   { background: var(--bg3); }
+  .channel-item.active  { background: rgba(59,130,246,.12); }
+
+  .ch-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--bg3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    flex-shrink: 0;
+    color: var(--text);
+    border: 1.5px solid var(--border);
+    position: relative;
+  }
+  .ch-avatar .live-badge {
+    position: absolute; bottom: -2px; right: -2px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--red);
+    border: 2px solid var(--bg2);
+    display: none;
+  }
+  .ch-avatar.is-live .live-badge { display: block; }
+
+  .ch-name { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ch-sub  { font-size: 11px; color: var(--muted); }
+
+  /* ── Main chat area ── */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #chat-feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 20px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scroll-behavior: smooth;
+  }
+  #chat-feed::-webkit-scrollbar { width: 4px; }
+  #chat-feed::-webkit-scrollbar-track { background: transparent; }
+  #chat-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* spacer to push messages to bottom initially */
+  .feed-spacer { flex: 1; min-height: 0; }
+
+  /* ── Message bubbles ── */
+  .msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 680px;
+    animation: slideUp .35s cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-meta {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 5px;
+    padding-left: 2px;
+  }
+  .msg-icon {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .msg-label  { font-size: 12px; font-weight: 600; }
+  .msg-time   { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+  .msg-body {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    border-radius-top-left: 4px;
+    line-height: 1.55;
+    font-size: 14px;
+    position: relative;
+  }
+
+  /* live_start */
+  .msg.type-live-start .msg-icon  { background: rgba(255,68,68,.18); color: var(--red); }
+  .msg.type-live-start .msg-label { color: var(--red); }
+  .msg.type-live-start .msg-body  {
+    background: rgba(255,68,68,.07);
+    border: 1px solid rgba(255,68,68,.2);
+  }
+
+  /* chat_collected */
+  .msg.type-chat .msg-icon  { background: rgba(59,130,246,.18); color: var(--blue); }
+  .msg.type-chat .msg-label { color: var(--blue); }
+  .msg.type-chat .msg-body  {
+    background: rgba(59,130,246,.06);
+    border: 1px solid rgba(59,130,246,.15);
+  }
+
+  /* live_end */
+  .msg.type-live-end .msg-icon  { background: rgba(245,158,11,.18); color: var(--amber); }
+  .msg.type-live-end .msg-label { color: var(--amber); }
+  .msg.type-live-end .msg-body  {
+    background: rgba(245,158,11,.06);
+    border: 1px solid rgba(245,158,11,.2);
+  }
+
+  /* summary_ready */
+  .msg.type-summary .msg-icon  { background: rgba(167,139,250,.18); color: var(--purple); }
+  .msg.type-summary .msg-label { color: var(--purple); }
+  .msg.type-summary .msg-body  {
+    background: rgba(167,139,250,.06);
+    border: 1px solid rgba(167,139,250,.2);
+  }
+
+  /* system */
+  .msg.type-system .msg-icon  { background: var(--bg3); color: var(--muted); }
+  .msg.type-system .msg-label { color: var(--muted); }
+  .msg.type-system .msg-body  {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* Summary card内 */
+  .summary-card { display: flex; flex-direction: column; gap: 12px; }
+
+  .summary-title {
+    font-size: 15px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .one-liner {
+    font-size: 14px;
+    font-style: italic;
+    color: var(--muted);
+    border-left: 3px solid var(--purple);
+    padding-left: 10px;
+    line-height: 1.5;
+  }
+
+  .summary-text {
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: rgba(240,240,242,.85);
+    white-space: pre-wrap;
+  }
+
+  .topics {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .topic-tag {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    background: rgba(167,139,250,.15);
+    color: var(--purple);
+    border: 1px solid rgba(167,139,250,.25);
+  }
+
+  .highlights { display: flex; flex-direction: column; gap: 6px; }
+  .hl-row {
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 13px;
+  }
+  .hl-ts {
+    flex-shrink: 0;
+    background: rgba(255,255,255,.07);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: monospace;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .stat-row {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .stat-chip {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--muted);
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+  }
+  .stat-chip strong { color: var(--text); }
+
+  .yt-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--red);
+    text-decoration: none;
+    opacity: .85;
+    transition: opacity .15s;
+  }
+  .yt-link:hover { opacity: 1; }
+
+  /* ── Bottom toolbar ── */
+  footer {
+    padding: 12px 20px;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .filter-btn {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .filter-btn:hover  { background: var(--bg3); color: var(--text); }
+  .filter-btn.active {
+    background: rgba(59,130,246,.15);
+    border-color: rgba(59,130,246,.4);
+    color: var(--blue);
+  }
+
+  .spacer { flex: 1; }
+
+  #scroll-btn {
+    display: none;
+    align-items: center; justify-content: center;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--blue);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-size: 16px;
+    transition: transform .15s;
+  }
+  #scroll-btn:hover { transform: scale(1.1); }
+  #scroll-btn.show  { display: flex; }
+
+  /* ── AI Settings Panel ── */
+  .aside-footer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .settings-toggle {
+    width: 100%;
+    padding: 11px 16px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: color .15s, background .15s;
+    text-align: left;
+  }
+  .settings-toggle:hover { color: var(--text); background: var(--bg3); }
+  .settings-toggle.open  { color: var(--text); background: var(--bg3); }
+
+  .settings-panel {
+    background: var(--bg3);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height .25s ease, padding .25s ease;
+    padding: 0 14px;
+  }
+  .settings-panel.open {
+    max-height: 360px;
+    padding: 14px;
+  }
+
+  .setting-group { display: flex; flex-direction: column; gap: 5px; }
+  .setting-label {
+    font-size: 10px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .setting-input option { background: var(--bg3); color: var(--text); }
+
+  .setting-input {
+    width: 100%;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .setting-input:focus { border-color: rgba(59,130,246,.5); }
+  .setting-input::placeholder { color: var(--muted); }
+
+  .save-settings-btn {
+    padding: 8px;
+    border-radius: 7px;
+    border: none;
+    background: var(--blue);
+    color: #fff;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s;
+    margin-top: 2px;
+  }
+  .save-settings-btn:hover    { opacity: .85; }
+  .save-settings-btn:disabled { opacity: .4; cursor: default; }
+
+  .settings-status {
+    font-size: 11px;
+    text-align: center;
+    min-height: 14px;
+    transition: color .2s;
+  }
+
+  .setting-section-label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 2px;
+  }
+
+  .setting-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0;
+  }
+
+  /* ── Empty state ── */
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  #empty.hidden { display: none; }
+  #empty .empty-icon { font-size: 48px; opacity: .3; }
+  #empty p { font-size: 14px; }
+  #empty small { font-size: 12px; opacity: .6; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="logo">▶</div>
+    <div>
+      <h1>YouTube Live Summary</h1>
+      <p>라이브 방송 모니터링 &amp; AI 요약</p>
+    </div>
+  </div>
+  <div class="status-pills">
+    <div class="pill" id="conn-pill">
+      <span class="dot pulse"></span>
+      <span id="conn-label">연결 중...</span>
+    </div>
+    <div class="pill" id="live-pill" style="display:none">
+      <span class="dot pulse"></span>
+      <span id="live-label">LIVE</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="aside-title">모니터링 채널</div>
+    <div id="channel-list"></div>
+    <div class="aside-footer">
+      <div class="settings-panel" id="settings-panel">
+        <div class="setting-section-label">YouTube</div>
+        <div class="setting-group">
+          <div class="setting-label">API Key</div>
+          <input id="yt-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+        </div>
+        <div class="setting-divider"></div>
+        <div class="setting-section-label">AI 모델</div>
+        <div class="setting-group">
+          <div class="setting-label">Provider</div>
+          <select id="ai-provider-select" class="setting-input" onchange="selectProvider(this.value)">
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">OpenAI</option>
+            <option value="grok">Grok (xAI)</option>
+            <option value="gemini">Gemini (Google)</option>
+            <option value="custom">Custom (OpenAI 호환)</option>
+          </select>
+        </div>
+        <div class="setting-group" id="base-url-group" style="display:none">
+          <div class="setting-label">Base URL</div>
+          <input id="ai-baseurl" class="setting-input" type="text" placeholder="http://localhost:11434/v1" />
+        </div>
+        <div class="setting-group">
+          <div class="setting-label">모델</div>
+          <input id="ai-model" class="setting-input" type="text" list="model-suggestions" placeholder="모델명 입력" />
+          <datalist id="model-suggestions"></datalist>
+        </div>
+        <div class="setting-group">
+          <div class="setting-label">API Key</div>
+          <input id="ai-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+        </div>
+        <button class="save-settings-btn" id="save-settings-btn" onclick="saveSettings()">저장</button>
+        <div class="settings-status" id="settings-status"></div>
+      </div>
+      <button class="settings-toggle" id="settings-toggle" onclick="toggleSettings()">⚙ AI 모델 설정</button>
+    </div>
+  </aside>
+
+  <main>
+    <div id="empty">
+      <div class="empty-icon">📺</div>
+      <p>방송 대기 중</p>
+      <small>라이브 시작 시 자동으로 감지합니다</small>
+    </div>
+    <div id="chat-feed">
+      <div class="feed-spacer"></div>
+    </div>
+
+    <button id="scroll-btn" onclick="scrollToBottom()" title="최신 메시지로">↓</button>
+  </main>
+</div>
+
+<footer>
+  <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">전체</button>
+  <button class="filter-btn" data-filter="summary" onclick="setFilter('summary', this)">요약만</button>
+  <button class="filter-btn" data-filter="live" onclick="setFilter('live', this)">라이브 이벤트</button>
+  <div class="spacer"></div>
+  <button class="filter-btn" onclick="clearFeed()">피드 초기화</button>
+</footer>
+
+<script>
+const feed    = document.getElementById('chat-feed');
+const empty   = document.getElementById('empty');
+const connPill = document.getElementById('conn-pill');
+const connLabel = document.getElementById('conn-label');
+const livePill  = document.getElementById('live-pill');
+const liveLabel = document.getElementById('live-label');
+const scrollBtn = document.getElementById('scroll-btn');
+const channelList = document.getElementById('channel-list');
+
+let currentFilter = 'all';
+let liveCount = 0;
+let allMessages = [];
+let autoScroll = true;
+
+/* ── WebSocket ── */
+let ws, reconnectTimer;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    setConnected(true);
+    clearTimeout(reconnectTimer);
+    loadHistory();
+  };
+
+  ws.onmessage = (e) => {
+    const event = JSON.parse(e.data);
+    handleEvent(event);
+  };
+
+  ws.onclose = () => {
+    setConnected(false);
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function setConnected(ok) {
+  connPill.className = 'pill' + (ok ? ' connected' : '');
+  connLabel.textContent = ok ? '연결됨' : '재연결 중...';
+}
+
+/* ── History load ── */
+async function loadHistory() {
+  try {
+    const rows = await fetch('/api/history').then(r => r.json());
+    rows.reverse().forEach(row => {
+      if (row.summary_text) {
+        pushMsg(buildSummaryMsg(row, {
+          summary_text: row.summary_text,
+          key_topics: JSON.parse(row.key_topics || '[]'),
+          highlights: JSON.parse(row.highlights || '[]'),
+          one_liner: row.one_liner,
+        }, true));
+      } else {
+        pushMsg(buildLiveStartMsg({
+          channel_title: row.channel_title,
+          title: row.title,
+          video_id: row.video_id,
+        }, true));
+      }
+    });
+    const live = await fetch('/api/live').then(r => r.json());
+    live.forEach(s => {
+      updateChannelItem(s.channel_id, s.channel_title, true);
+      setLiveCount(liveCount + 1);
+    });
+  } catch(e) { console.warn('history load failed', e); }
+}
+
+/* ── Event handlers ── */
+function handleEvent(ev) {
+  switch(ev.type) {
+    case 'live_start': {
+      const s = ev.session;
+      updateChannelItem(s.channel_id, s.channel_title, true);
+      setLiveCount(liveCount + 1);
+      pushMsg(buildLiveStartMsg(s));
+      break;
+    }
+    case 'chat_collected': {
+      pushMsg(buildChatMsg(ev));
+      break;
+    }
+    case 'live_end': {
+      setLiveCount(Math.max(0, liveCount - 1));
+      pushMsg(buildLiveEndMsg(ev));
+      break;
+    }
+    case 'summary_ready': {
+      pushMsg(buildSummaryMsg(ev.session, ev.summary));
+      break;
+    }
+  }
+}
+
+/* ── Message builders ── */
+function now() {
+  return new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function buildLiveStartMsg(s, historical = false) {
+  const url = s.video_id ? `https://www.youtube.com/watch?v=${s.video_id}` : '';
+  return {
+    type: 'live-start',
+    filter: 'live',
+    time: historical ? '' : now(),
+    label: '라이브 시작',
+    icon: '▶',
+    html: `
+      <strong style="font-size:15px">${esc(s.channel_title)}</strong>
+      <div style="color:var(--muted);font-size:13px;margin-top:4px">${esc(s.title)}</div>
+      ${url ? `<a class="yt-link" href="${url}" target="_blank">▶ 방송 보러가기</a>` : ''}
+    `,
+  };
+}
+
+function buildChatMsg(ev) {
+  return {
+    type: 'chat',
+    filter: 'live',
+    time: now(),
+    label: '채팅 수집',
+    icon: '💬',
+    html: `채팅 <strong>${ev.count}건</strong> 수집 &nbsp;·&nbsp; 동시 시청자 <strong>${(ev.viewers||0).toLocaleString()}명</strong>`,
+  };
+}
+
+function buildLiveEndMsg(ev) {
+  const secs = ev.duration_secs || 0;
+  const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+  const dur = h ? `${h}시간 ${m}분` : `${m}분 ${s}초`;
+  return {
+    type: 'live-end',
+    filter: 'live',
+    time: now(),
+    label: '방송 종료',
+    icon: '⏹',
+    html: `방송이 종료됐습니다. 방송 시간: <strong>${dur}</strong><br>
+           <span style="color:var(--muted);font-size:12px">요약 생성 중... 잠시 후 결과가 올라옵니다.</span>`,
+  };
+}
+
+function buildSummaryMsg(session, summary, historical = false) {
+  const topics = (summary.key_topics || []).map(t =>
+    `<span class="topic-tag">${esc(t)}</span>`
+  ).join('');
+
+  const highlights = (summary.highlights || []).slice(0, 5).map(hl => {
+    const ts = hl.timestamp && hl.timestamp !== 'null'
+      ? `<span class="hl-ts">${esc(hl.timestamp)}</span>`
+      : '';
+    return `<div class="hl-row">${ts}<span>${esc(hl.description)}</span></div>`;
+  }).join('');
+
+  const url = session.video_id ? `https://www.youtube.com/watch?v=${session.video_id}` : '';
+  const peak = (session.peak_viewers||0).toLocaleString();
+  const secs = session.duration_secs || 0;
+  const h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60);
+  const dur = h ? `${h}시간 ${m}분` : `${m}분`;
+
+  return {
+    type: 'summary',
+    filter: 'summary',
+    time: historical ? '' : now(),
+    label: 'AI 요약 완료',
+    icon: '✦',
+    html: `
+      <div class="summary-card">
+        <div class="summary-title">
+          ${esc(session.title || session.channel_title || '')}
+        </div>
+        <div class="stat-row">
+          <div class="stat-chip">⏱ <strong>${dur}</strong></div>
+          <div class="stat-chip">👁 최대 <strong>${peak}명</strong></div>
+          ${url ? `<a class="yt-link" href="${url}" target="_blank">▶ 영상 보기</a>` : ''}
+        </div>
+        ${summary.one_liner ? `<div class="one-liner">${esc(summary.one_liner)}</div>` : ''}
+        <div class="summary-text">${esc(summary.summary_text||'')}</div>
+        ${topics ? `<div class="topics">${topics}</div>` : ''}
+        ${highlights ? `<div class="highlights"><div style="font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600">주요 하이라이트</div>${highlights}</div>` : ''}
+      </div>
+    `,
+  };
+}
+
+/* ── Render ── */
+function pushMsg(msg) {
+  allMessages.push(msg);
+  if (currentFilter === 'all' || currentFilter === msg.filter) {
+    renderMsg(msg);
+  }
+  empty.classList.add('hidden');
+}
+
+function renderMsg(msg) {
+  const el = document.createElement('div');
+  el.className = `msg type-${msg.type}`;
+  el.dataset.filter = msg.filter;
+  el.innerHTML = `
+    <div class="msg-meta">
+      <div class="msg-icon">${msg.icon}</div>
+      <span class="msg-label">${msg.label}</span>
+      ${msg.time ? `<span class="msg-time">${msg.time}</span>` : ''}
+    </div>
+    <div class="msg-body">${msg.html}</div>
+  `;
+  feed.appendChild(el);
+  if (autoScroll) scrollToBottom();
+}
+
+function renderAll() {
+  const spacer = feed.querySelector('.feed-spacer');
+  feed.innerHTML = '';
+  feed.appendChild(spacer);
+  const filtered = currentFilter === 'all'
+    ? allMessages
+    : allMessages.filter(m => m.filter === currentFilter);
+  if (filtered.length === 0) {
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    filtered.forEach(renderMsg);
+  }
+  scrollToBottom();
+}
+
+/* ── Sidebar ── */
+const channelState = {};
+
+function updateChannelItem(id, title, isLive) {
+  channelState[id] = { title, isLive };
+  renderChannels();
+}
+
+function renderChannels() {
+  channelList.innerHTML = '';
+  Object.entries(channelState).forEach(([id, ch]) => {
+    const item = document.createElement('div');
+    item.className = 'channel-item';
+    const initials = (ch.title||'?').slice(0,2).toUpperCase();
+    item.innerHTML = `
+      <div class="ch-avatar${ch.isLive ? ' is-live' : ''}">
+        ${initials}
+        <div class="live-badge"></div>
+      </div>
+      <div>
+        <div class="ch-name">${esc(ch.title)}</div>
+        <div class="ch-sub">${ch.isLive ? '🔴 LIVE' : '대기 중'}</div>
+      </div>
+    `;
+    channelList.appendChild(item);
+  });
+}
+
+/* ── Live pill ── */
+function setLiveCount(n) {
+  liveCount = n;
+  if (n > 0) {
+    livePill.style.display = '';
+    liveLabel.textContent = `LIVE ${n > 1 ? n+'개' : ''}`;
+  } else {
+    livePill.style.display = 'none';
+  }
+}
+
+/* ── Filter ── */
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderAll();
+}
+
+/* ── Scroll ── */
+function scrollToBottom() {
+  feed.scrollTop = feed.scrollHeight;
+}
+
+feed.addEventListener('scroll', () => {
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
+  autoScroll = atBottom;
+  scrollBtn.classList.toggle('show', !atBottom);
+});
+
+function clearFeed() {
+  allMessages = [];
+  const spacer = feed.querySelector('.feed-spacer') || document.createElement('div');
+  spacer.className = 'feed-spacer';
+  feed.innerHTML = '';
+  feed.appendChild(spacer);
+  empty.classList.remove('hidden');
+}
+
+/* ── Util ── */
+function esc(str) {
+  return (str||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/\n/g,'<br>');
+}
+
+/* ── Demo mode (서버 없을 때) ── */
+function runDemo() {
+  const DEMO = [
+    { type:'live_start', session:{ channel_id:'ch1', channel_title:'코딩애플', title:'자바스크립트 최신 기능 총정리 라이브', video_id:'dQw4w9WgXcQ' }},
+    { type:'chat_collected', session_id:'ch1_v1', count:142, viewers:3820 },
+    { type:'chat_collected', session_id:'ch1_v1', count:89,  viewers:4210 },
+    { type:'live_start', session:{ channel_id:'ch2', channel_title:'노마드코더', title:'React 19 신기능 파헤치기', video_id:'abc123' }},
+    { type:'chat_collected', session_id:'ch1_v1', count:201, viewers:5100 },
+    { type:'live_end', session_id:'ch1_v1', duration_secs:5432 },
+    { type:'summary_ready',
+      session:{ id:'ch1_v1', channel_id:'ch1', channel_title:'코딩애플', title:'자바스크립트 최신 기능 총정리 라이브', video_id:'dQw4w9WgXcQ', peak_viewers:5100, duration_secs:5432 },
+      summary:{
+        one_liner:'ES2025 주요 기능인 Array.fromAsync와 Promise.withResolvers를 실전 코드로 시연하며 쉽게 설명한 방송',
+        summary_text:`이번 라이브에서는 ES2025에서 새로 추가된 자바스크립트 문법을 실전 예제와 함께 소개했습니다.\n\n특히 Array.fromAsync, Promise.withResolvers, 정규식 개선 등 실무에서 바로 쓸 수 있는 기능 위주로 다뤘으며 시청자 질문에 실시간으로 답변하는 시간도 가졌습니다.\n\n마지막 30분은 라이브 코딩 세션으로 실제 Todo 앱에 새 기능을 적용하는 과정을 시연했습니다.`,
+        key_topics:['ES2025 신기능','Array.fromAsync','Promise.withResolvers','라이브 코딩','Q&A'],
+        highlights:[
+          { timestamp:'00:12:30', description:'Array.fromAsync 소개 및 비동기 이터레이터 실습' },
+          { timestamp:'00:38:00', description:'Promise.withResolvers로 콜백 지옥 탈출 시연' },
+          { timestamp:'01:10:45', description:'시청자 질문 모음: "실무에서 언제 씁니까?" 집중 답변' },
+          { timestamp:'01:22:00', description:'Todo 앱 라이브 코딩 — 신기능 통합 적용' },
+        ],
+      }
+    },
+    { type:'chat_collected', session_id:'ch2_v2', count:310, viewers:2890 },
+  ];
+
+  setConnected(true);
+  pushMsg({ type:'system', filter:'all', time:'', label:'시스템', icon:'ℹ', html:'데모 모드로 실행 중입니다. 실제 서버 연결 시 라이브 데이터가 표시됩니다.' });
+
+  let i = 0;
+  const delays = [800, 2000, 3500, 5000, 6500, 8000, 9500, 13000];
+  DEMO.forEach((ev, idx) => {
+    setTimeout(() => {
+      if (ev.type === 'live_start') updateChannelItem(ev.session.channel_id, ev.session.channel_title, true);
+      if (ev.type === 'live_end')   setLiveCount(Math.max(0, liveCount-1));
+      handleEvent(ev);
+    }, delays[idx] || idx * 1500);
+  });
+}
+
+/* ── AI Settings ── */
+const MODEL_OPTIONS = {
+  claude: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3'],
+  grok:   ['grok-3', 'grok-3-mini', 'grok-2'],
+  gemini: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+  custom: [],
+};
+let settingsOpen = false;
+
+function toggleSettings() {
+  settingsOpen = !settingsOpen;
+  document.getElementById('settings-panel').classList.toggle('open', settingsOpen);
+  document.getElementById('settings-toggle').classList.toggle('open', settingsOpen);
+  if (settingsOpen) loadSettings();
+}
+
+function selectProvider(p) {
+  const dl = document.getElementById('model-suggestions');
+  dl.innerHTML = (MODEL_OPTIONS[p] || []).map(m => `<option value="${m}">`).join('');
+  const modelInput = document.getElementById('ai-model');
+  if (MODEL_OPTIONS[p]?.length) modelInput.value = MODEL_OPTIONS[p][0];
+  else modelInput.value = '';
+  document.getElementById('base-url-group').style.display = p === 'custom' ? '' : 'none';
+}
+
+async function loadSettings() {
+  try {
+    const s = await fetch('/api/settings').then(r => r.json());
+    const p = s.provider || 'claude';
+    document.getElementById('ai-provider-select').value = p;
+    selectProvider(p);
+    document.getElementById('ai-model').value = s.model || '';
+    document.getElementById('ai-baseurl').value = s.base_url || '';
+    const keyInput = document.getElementById('ai-apikey');
+    keyInput.value = '';
+    keyInput.placeholder = s.api_key_masked
+      ? `현재: ${s.api_key_masked} (변경 시 입력)`
+      : '.env 키 사용 (변경 시 입력)';
+    const ytInput = document.getElementById('yt-apikey');
+    ytInput.value = '';
+    ytInput.placeholder = s.yt_key_masked
+      ? `현재: ${s.yt_key_masked} (변경 시 입력)`
+      : '.env 키 사용 (변경 시 입력)';
+  } catch(e) { /* 서버 미연결 시 무시 */ }
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('save-settings-btn');
+  const status = document.getElementById('settings-status');
+  btn.disabled = true;
+  status.textContent = '저장 중...';
+  status.style.color = 'var(--muted)';
+  try {
+    const p = document.getElementById('ai-provider-select').value;
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider:        p,
+        model:           document.getElementById('ai-model').value.trim(),
+        api_key:         document.getElementById('ai-apikey').value.trim(),
+        base_url:        document.getElementById('ai-baseurl').value.trim(),
+        youtube_api_key: document.getElementById('yt-apikey').value.trim(),
+      }),
+    });
+    status.textContent = '✓ 저장됨';
+    status.style.color = 'var(--green)';
+    document.getElementById('ai-apikey').value = '';
+    document.getElementById('yt-apikey').value = '';
+    await loadSettings();
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } catch(e) {
+    status.textContent = '저장 실패';
+    status.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Boot ── */
+connect();
+setTimeout(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) runDemo();
+}, 2500);
+</script>
+</body>
+</html>
