@@ -117,6 +117,48 @@
     color: var(--muted);
   }
 
+  /* ── Channel add ── */
+  .ch-add-row {
+    display: flex;
+    gap: 6px;
+    padding: 0 8px 8px;
+    flex-shrink: 0;
+  }
+  .ch-add-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+    min-width: 0;
+    transition: border-color .15s;
+  }
+  .ch-add-input:focus { border-color: rgba(59,130,246,.5); }
+  .ch-add-input::placeholder { color: var(--muted); }
+  .ch-add-btn {
+    flex-shrink: 0;
+    width: 30px; height: 30px;
+    border-radius: 7px;
+    border: none;
+    background: var(--blue);
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .15s;
+  }
+  .ch-add-btn:hover    { opacity: .8; }
+  .ch-add-btn:disabled { opacity: .4; cursor: default; }
+  .ch-add-status {
+    padding: 0 8px 6px;
+    font-size: 11px;
+    min-height: 16px;
+  }
+
   #channel-list { overflow-y: auto; flex: 1; padding: 0 8px 8px; }
 
   .channel-item {
@@ -538,10 +580,17 @@
 <div class="layout">
   <aside>
     <div class="aside-title">모니터링 채널</div>
+    <div class="ch-add-row">
+      <input id="ch-add-input" class="ch-add-input" type="text"
+             placeholder="채널 URL / @핸들 / ID"
+             onkeydown="if(event.key==='Enter') addChannel()" />
+      <button class="ch-add-btn" id="ch-add-btn" onclick="addChannel()" title="채널 추가">+</button>
+    </div>
+    <div class="ch-add-status" id="ch-add-status"></div>
     <div id="channel-list"></div>
     <div class="aside-footer">
       <div class="settings-panel" id="settings-panel">
-        <div class="setting-section-label">YouTube</div>
+        <div class="setting-section-label">YouTube 인증</div>
         <div class="setting-group">
           <div class="setting-label">API Key</div>
           <input id="yt-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
@@ -574,7 +623,7 @@
         <button class="save-settings-btn" id="save-settings-btn" onclick="saveSettings()">저장</button>
         <div class="settings-status" id="settings-status"></div>
       </div>
-      <button class="settings-toggle" id="settings-toggle" onclick="toggleSettings()">⚙ AI 모델 설정</button>
+      <button class="settings-toggle" id="settings-toggle" onclick="toggleSettings()">⚙ YouTube · AI 설정</button>
     </div>
   </aside>
 
@@ -983,6 +1032,42 @@ function runDemo() {
       handleEvent(ev);
     }, delays[idx] || idx * 1500);
   });
+}
+
+/* ── Channel add ── */
+async function addChannel() {
+  const input = document.getElementById('ch-add-input');
+  const btn   = document.getElementById('ch-add-btn');
+  const status = document.getElementById('ch-add-status');
+  const val = input.value.trim();
+  if (!val) return;
+
+  btn.disabled = true;
+  status.style.color = 'var(--muted)';
+  status.textContent = '추가 중...';
+
+  try {
+    const res = await fetch('/api/channels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: val }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.style.color = 'var(--red)';
+      status.textContent = data.detail || '추가 실패';
+    } else {
+      status.style.color = 'var(--green)';
+      status.textContent = `✓ ${data.title} 추가됨`;
+      input.value = '';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    }
+  } catch(e) {
+    status.style.color = 'var(--red)';
+    status.textContent = '서버 연결 오류';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ── AI Settings ── */
