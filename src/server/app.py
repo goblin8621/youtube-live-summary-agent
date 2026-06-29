@@ -57,6 +57,12 @@ async def get_history():
 
 @app.get("/api/live")
 async def get_live_sessions():
+    if not store.is_db_mode():
+        from src.scheduler import poller as p
+        return [
+            {"id": v["session_id"], "channel_id": cid, "status": "live"}
+            for cid, v in p._active_sessions.items()
+        ]
     ids = await db.get_live_session_ids()
     sessions = []
     for sid in ids:
@@ -121,13 +127,8 @@ async def update_settings(req: SettingsUpdateRequest):
 
 @app.get("/api/channels")
 async def list_channels():
-    """DB에 등록된 채널 목록 반환."""
-    async with aiosqlite.connect(settings.db_path) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute(
-            "SELECT * FROM monitored_channels ORDER BY added_at DESC"
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+    """등록된 채널 목록 반환 (DB 또는 파일 모드)."""
+    return await store.get_channels()
 
 
 class ChannelAddRequest(BaseModel):
@@ -195,15 +196,14 @@ async def add_channel(req: ChannelAddRequest):
     except HttpError as e:
         raise HTTPException(status_code=502, detail=f"YouTube API 오류: {e}")
 
-    async with aiosqlite.connect(settings.db_path) as conn:
-        try:
-            await conn.execute("""
-                INSERT INTO monitored_channels (channel_id, title, thumbnail_url, subscriber_count)
-                VALUES (?, ?, ?, ?)
-            """, (channel_id, title, thumb, subs))
-            await conn.commit()
-        except aiosqlite.IntegrityError:
-            raise HTTPException(status_code=409, detail="이미 등록된 채널입니다.")
+    ok = await store.add_channel({
+        "channel_id": channel_id,
+        "title": title,
+        "thumbnail_url": thumb,
+        "subscriber_count": subs,
+    })
+    if not ok:
+        raise HTTPException(status_code=409, detail="이미 등록된 채널입니다.")
 
     # 폴링 루프에 채널 추가 통지
     from src.scheduler import poller as p
@@ -218,16 +218,9 @@ async def add_channel(req: ChannelAddRequest):
 @app.delete("/api/channels/{channel_id}")
 async def remove_channel(channel_id: str):
     """채널 제거."""
-    async with aiosqlite.connect(settings.db_path) as conn:
-        cur = await conn.execute(
-            "SELECT title FROM monitored_channels WHERE channel_id = ?", (channel_id,)
-        )
-        row = await cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="등록되지 않은 채널입니다.")
-        title = row[0]
-        await conn.execute("DELETE FROM monitored_channels WHERE channel_id = ?", (channel_id,))
-        await conn.commit()
+    title = await store.remove_channel(channel_id)
+    if title is None:
+        raise HTTPException(status_code=404, detail="등록되지 않은 채널입니다.")
 
     from src.scheduler import poller as p
     p._runtime_channels.discard(channel_id)

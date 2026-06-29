@@ -1,0 +1,74 @@
+replicaCount: 1
+
+image:
+  repository: youtube-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: nginx
+  host: youtube-agent.example.com
+  tls: false
+  tlsSecretName: ""
+
+# 스토리지 모드: db(SQLite PVC) 또는 file(config.json)
+storage:
+  mode: db   # "db" | "file"
+
+  # DB 모드: SQLite 데이터 볼륨
+  data:
+    enabled: true
+    storageClass: ""   # "" = 클러스터 기본값
+    size: 5Gi
+
+  # 리포트 볼륨 (마크다운 파일)
+  reports:
+    enabled: true
+    storageClass: ""
+    size: 2Gi
+
+# API 키 (Secret에 저장)
+secrets:
+  youtubeApiKey: ""
+  anthropicApiKey: ""
+  slackBotToken: ""
+  notionToken: ""
+
+# 비밀이 아닌 환경변수
+env:
+  POLL_INTERVAL_SECONDS: "300"
+  CLAUDE_MODEL: "claude-sonnet-4-6"
+  SLACK_CHANNEL_ID: "#youtube-summaries"
+  NOTION_DATABASE_ID: ""
+  LOG_LEVEL: "INFO"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+livenessProbe:
+  httpGet:
+    path: /api/channels
+    port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/channels
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3

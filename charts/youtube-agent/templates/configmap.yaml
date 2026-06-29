@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "youtube-agent.fullname" . }}
+  labels:
+    {{- include "youtube-agent.labels" . | nindent 4 }}
+data:
+  POLL_INTERVAL_SECONDS: {{ .Values.env.POLL_INTERVAL_SECONDS | quote }}
+  CLAUDE_MODEL: {{ .Values.env.CLAUDE_MODEL | quote }}
+  SLACK_CHANNEL_ID: {{ .Values.env.SLACK_CHANNEL_ID | quote }}
+  NOTION_DATABASE_ID: {{ .Values.env.NOTION_DATABASE_ID | quote }}
+  LOG_LEVEL: {{ .Values.env.LOG_LEVEL | quote }}
+  # DB 경로: DB 모드일 때 data PVC에 저장
+  DB_PATH: {{ if eq .Values.storage.mode "db" }}"/app/data/agent.db"{{ else }}"/tmp/no-db"{{ end }}

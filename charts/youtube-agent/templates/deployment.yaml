@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "youtube-agent.fullname" . }}
+  labels:
+    {{- include "youtube-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # 데이터 볼륨(RWO)이 있으므로 롤링 업데이트 시 이전 파드 먼저 종료
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "youtube-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "youtube-agent.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "youtube-agent.fullname" . }}
+            - secretRef:
+                name: {{ include "youtube-agent.fullname" . }}
+          volumeMounts:
+            {{- if .Values.storage.data.enabled }}
+            - name: data
+              mountPath: /app/data
+            {{- end }}
+            {{- if .Values.storage.reports.enabled }}
+            - name: reports
+              mountPath: /app/reports
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.storage.data.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "youtube-agent.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.storage.reports.enabled }}
+        - name: reports
+          persistentVolumeClaim:
+            claimName: {{ include "youtube-agent.fullname" . }}-reports
+        {{- end }}

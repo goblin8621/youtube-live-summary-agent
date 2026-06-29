@@ -59,7 +59,8 @@ async def _handle_live_start(channel_id: str, live_info: dict):
         "status": "live",
         "peak_viewers": live_info["concurrent_viewers"],
     }
-    await db.upsert_session(session)
+    if store.is_db_mode():
+        await db.upsert_session(session)
     await _emit({"type": "live_start", "session": session})
 
     chat = ChatCollector(video_id=video_id, session_id=session_id)
@@ -83,7 +84,8 @@ async def _collect_chat(channel_id: str, current_viewers: int):
     state["peak_viewers"] = max(state["peak_viewers"], current_viewers)
     messages = state["chat"].collect_page()
     if messages:
-        await db.insert_chat_messages(messages)
+        if store.is_db_mode():
+            await db.insert_chat_messages(messages)
         logger.debug("채팅 %d건 수집 (channel=%s)", len(messages), channel_id)
         await _emit({
             "type": "chat_collected",
@@ -109,13 +111,26 @@ async def _handle_live_end(channel_id: str):
 
     logger.info("[END] 방송 종료 (session=%s, duration=%ds)", session_id, duration_secs)
 
-    await db.close_session(session_id, ended_at, duration_secs)
+    if store.is_db_mode():
+        await db.close_session(session_id, ended_at, duration_secs)
     await _emit({"type": "live_end", "session_id": session_id, "duration_secs": duration_secs})
 
-    # 세션 정보 갱신
-    session = await db.get_session(session_id)
-    if not session:
-        return
+    # 세션 정보 구성 (파일 모드는 메모리 데이터 사용)
+    if store.is_db_mode():
+        session = await db.get_session(session_id)
+        if not session:
+            return
+    else:
+        session = {
+            "id": session_id,
+            "channel_id": channel_id,
+            "video_id": state["video_id"],
+            "title": "",
+            "started_at": state["started_at"],
+            "ended_at": ended_at,
+            "duration_secs": duration_secs,
+            "status": "ended",
+        }
     session["peak_viewers"] = state["peak_viewers"]
 
     # 요약 파이프라인을 별도 태스크로 실행 (폴링 블로킹 방지)
@@ -130,11 +145,15 @@ async def _run_summary_pipeline(video_id: str, session: dict):
     # 자막 수집 (동기 함수 → 스레드 풀)
     loop = asyncio.get_event_loop()
     captions_raw = await loop.run_in_executor(None, fetch_captions, video_id)
-    await db.insert_captions(session_id, captions_raw)
 
     # 텍스트 빌드
-    captions_db = await db.get_captions(session_id)
-    chat_db = await db.get_chat_messages(session_id)
+    if store.is_db_mode():
+        await db.insert_captions(session_id, captions_raw)
+        captions_db = await db.get_captions(session_id)
+        chat_db = await db.get_chat_messages(session_id)
+    else:
+        captions_db = [{"start_sec": c.get("start", 0), "text": c.get("text", "")} for c in captions_raw]
+        chat_db = []
     caption_text = build_caption_text(captions_db)
     chat_text = build_chat_text(chat_db)
 
@@ -163,13 +182,9 @@ async def _run_summary_pipeline(video_id: str, session: dict):
 
 
 async def _load_db_channels():
-    """DB에 등록된 채널 ID를 _runtime_channels에 동기화."""
-    import aiosqlite
-    async with aiosqlite.connect(settings.db_path) as conn:
-        async with conn.execute("SELECT channel_id FROM monitored_channels") as cur:
-            rows = await cur.fetchall()
-    for (cid,) in rows:
-        _runtime_channels.add(cid)
+    """저장된 채널 ID를 _runtime_channels에 동기화 (DB 또는 파일 모드 모두 지원)."""
+    ids = await store.load_db_channels()
+    _runtime_channels.update(ids)
 
 
 async def _handle_new_video(video: dict):
@@ -271,19 +286,19 @@ async def poll_once():
                 await _handle_live_end(channel_id)
 
         # ── 신규 영상 감지 ──
-        last_id = await db.get_last_video_id(channel_id)
+        last_id = await store.get_last_video_id(channel_id)
 
         if last_id is None:
             # 최초 실행 — 기준점만 저장하고 요약하지 않음
             init_id = await loop.run_in_executor(None, get_latest_video_id, channel_id)
             if init_id:
-                await db.set_last_video_id(channel_id, init_id)
+                await store.set_last_video_id(channel_id, init_id)
                 logger.info("영상 기준점 설정 (channel=%s, video=%s)", channel_id, init_id)
         else:
             new_videos = await loop.run_in_executor(None, get_new_videos, channel_id, last_id)
             if new_videos:
                 # 가장 최신 ID를 먼저 저장 (재시작 시 중복 방지)
-                await db.set_last_video_id(channel_id, new_videos[0]["video_id"])
+                await store.set_last_video_id(channel_id, new_videos[0]["video_id"])
                 for video in reversed(new_videos):  # 오래된 것부터 처리
                     await _handle_new_video(video)
 

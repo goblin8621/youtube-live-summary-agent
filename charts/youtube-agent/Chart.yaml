@@ -1,0 +1,6 @@
+apiVersion: v2
+name: youtube-agent
+description: YouTube Live Summary Agent — AI 기반 라이브·영상 요약 에이전트
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

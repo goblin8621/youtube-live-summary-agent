@@ -82,6 +82,89 @@ async def save_video_summary(video: dict, summary: dict):
         await loop.run_in_executor(None, summary_store.save_video_summary, video, summary)
 
 
+# ── 채널 관리 ────────────────────────────────────────────────
+
+async def get_channels() -> list[dict]:
+    if _use_db:
+        import aiosqlite
+        async with aiosqlite.connect(settings.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute(
+                "SELECT * FROM monitored_channels ORDER BY added_at DESC"
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+    else:
+        from src.storage import config_store
+        return config_store.get_channels()
+
+
+async def add_channel(channel: dict) -> bool:
+    """채널 추가. 중복이면 False."""
+    if _use_db:
+        import aiosqlite
+        async with aiosqlite.connect(settings.db_path) as conn:
+            try:
+                await conn.execute("""
+                    INSERT INTO monitored_channels (channel_id, title, thumbnail_url, subscriber_count)
+                    VALUES (:channel_id, :title, :thumbnail_url, :subscriber_count)
+                """, channel)
+                await conn.commit()
+                return True
+            except aiosqlite.IntegrityError:
+                return False
+    else:
+        from src.storage import config_store
+        return config_store.add_channel(channel)
+
+
+async def remove_channel(channel_id: str) -> str | None:
+    """채널 제거. 제거된 title 반환, 없으면 None."""
+    if _use_db:
+        import aiosqlite
+        async with aiosqlite.connect(settings.db_path) as conn:
+            async with conn.execute(
+                "SELECT title FROM monitored_channels WHERE channel_id = ?", (channel_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                return None
+            await conn.execute(
+                "DELETE FROM monitored_channels WHERE channel_id = ?", (channel_id,)
+            )
+            await conn.commit()
+            return row[0]
+    else:
+        from src.storage import config_store
+        return config_store.remove_channel(channel_id)
+
+
+async def load_db_channels() -> set[str]:
+    """폴링 루프 시작 시 저장된 채널 ID 목록 로드."""
+    channels = await get_channels()
+    return {c["channel_id"] for c in channels}
+
+
+# ── 영상 기준점 (last_video_id) ───────────────────────────────
+
+async def get_last_video_id(channel_id: str) -> str | None:
+    if _use_db:
+        from src.storage import database as db
+        return await db.get_last_video_id(channel_id)
+    else:
+        from src.storage import config_store
+        val = config_store.get("last_video", channel_id)
+        return val if val else None
+
+
+async def set_last_video_id(channel_id: str, video_id: str):
+    if _use_db:
+        from src.storage import database as db
+        await db.set_last_video_id(channel_id, video_id)
+    else:
+        from src.storage import config_store
+        config_store.save("last_video", channel_id, video_id)
+
+
 # ── 히스토리 조회 ─────────────────────────────────────────────
 
 async def get_history(limit: int = 50) -> list[dict]:

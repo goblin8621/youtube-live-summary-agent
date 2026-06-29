@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     youtube_api_key: str = ""
-    anthropic_api_key: str
+    anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
 
     slack_bot_token: str = ""

@@ -45,3 +45,34 @@ def save_many(updates: dict[str, dict[str, str]]):
             data.setdefault(section, {}).update(kv)
         _write(data)
         logger.info("config.json 저장: %s", list(updates.keys()))
+
+
+# ── 채널 목록 ─────────────────────────────────────────────────
+
+def get_channels() -> list[dict]:
+    return _read().get("channels", [])
+
+
+def add_channel(channel: dict) -> bool:
+    """채널 추가. 이미 존재하면 False 반환."""
+    with _lock:
+        data = _read()
+        channels = data.setdefault("channels", [])
+        if any(c["channel_id"] == channel["channel_id"] for c in channels):
+            return False
+        channels.append(channel)
+        _write(data)
+    return True
+
+
+def remove_channel(channel_id: str) -> str | None:
+    """채널 제거. 제거된 채널 title 반환, 없으면 None."""
+    with _lock:
+        data = _read()
+        channels = data.get("channels", [])
+        target = next((c for c in channels if c["channel_id"] == channel_id), None)
+        if not target:
+            return None
+        data["channels"] = [c for c in channels if c["channel_id"] != channel_id]
+        _write(data)
+    return target.get("title", "")
