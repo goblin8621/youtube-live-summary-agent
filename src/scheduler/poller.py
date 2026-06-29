@@ -11,6 +11,7 @@ from src.watcher.chat_collector import ChatCollector
 from src.watcher.caption_watcher import fetch_captions
 from src.watcher.video_detector import get_new_videos, get_latest_video_id
 from src.storage import database as db
+from src.storage import store
 from src.pipeline.preprocessor import build_caption_text, build_chat_text
 from src.pipeline.summarizer import summarize
 from src.pipeline.reporter import build_report
@@ -139,7 +140,7 @@ async def _run_summary_pipeline(video_id: str, session: dict):
 
     # Claude 요약 (동기 API → 스레드 풀)
     summary = await loop.run_in_executor(None, summarize, caption_text, chat_text, session)
-    await db.save_summary(session_id, summary)
+    await store.save_summary(session_id, session, summary)
 
     # 리포트 생성
     report_md = build_report(session, summary)
@@ -190,7 +191,7 @@ async def _run_video_summary_pipeline(video: dict):
 
     # 요약
     summary = await loop.run_in_executor(None, summarize_video, video, captions)
-    await db.save_video_summary(video, summary)
+    await store.save_video_summary(video, summary)
 
     # 리포트 저장
     import os, json as _json

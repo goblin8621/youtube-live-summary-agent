@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from pathlib import Path
 from googleapiclient.errors import HttpError
 from src.storage import database as db
+from src.storage import store
 from src.config import settings
 from src.pipeline import ai_client
 from src.watcher import youtube_client
@@ -50,20 +51,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/api/history")
 async def get_history():
-    """최근 종료된 세션 목록과 요약 반환."""
-    import aiosqlite
-    from src.config import settings
-    async with aiosqlite.connect(settings.db_path) as db_conn:
-        db_conn.row_factory = aiosqlite.Row
-        async with db_conn.execute("""
-            SELECT s.*, sm.summary_text, sm.key_topics, sm.highlights, sm.one_liner
-            FROM live_sessions s
-            LEFT JOIN summaries sm ON s.id = sm.session_id
-            ORDER BY s.started_at DESC
-            LIMIT 50
-        """) as cur:
-            rows = [dict(r) for r in await cur.fetchall()]
-    return rows
+    """최근 요약 목록 반환 (DB 모드: DB 조회 / 파일 모드: 파일 조회)."""
+    return await store.get_history(limit=50)
 
 
 @app.get("/api/live")
@@ -98,7 +87,7 @@ class SettingsUpdateRequest(BaseModel):
 
 @app.put("/api/settings")
 async def update_settings(req: SettingsUpdateRequest):
-    """AI + YouTube 설정 변경 및 DB 저장."""
+    """AI + YouTube 설정 변경 및 저장 (DB 모드: DB / 파일 모드: config.json)."""
     ai_client.update_config(
         provider=req.provider or None,
         model=req.model or None,
@@ -107,14 +96,21 @@ async def update_settings(req: SettingsUpdateRequest):
     )
     if req.youtube_api_key:
         youtube_client.set_key(req.youtube_api_key)
-        await db.set_setting("yt.api_key", req.youtube_api_key)
 
     cfg = ai_client._config
-    await db.set_setting("ai.provider", cfg["provider"])
-    await db.set_setting("ai.model", cfg["model"])
-    await db.set_setting("ai.base_url", cfg["base_url"])
+    updates: dict[str, dict[str, str]] = {
+        "ai": {
+            "provider": cfg["provider"],
+            "model":    cfg["model"],
+            "base_url": cfg["base_url"],
+        }
+    }
     if req.api_key:
-        await db.set_setting("ai.api_key", cfg["api_key"])
+        updates["ai"]["api_key"] = cfg["api_key"]
+    if req.youtube_api_key:
+        updates["youtube"] = {"api_key": req.youtube_api_key}
+
+    await store.set_settings_many(updates)
 
     logger.info("설정 저장: provider=%s model=%s yt_key=%s",
                 cfg["provider"], cfg["model"], bool(req.youtube_api_key))

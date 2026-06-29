@@ -420,11 +420,86 @@ case 'channel_removed':
 
 ---
 
+---
+
+## Phase 13 · 채널 추가 UI + 설정 버튼 개선
+
+**변경 파일: `static/index.html`**
+
+- 사이드바 상단에 채널 URL/@핸들/ID 입력창 + `+` 버튼 추가
+  - Enter 키로도 추가 가능, 성공/실패 메시지 3초 표시
+- 설정 토글 버튼 레이블: `⚙ AI 모델 설정` → `⚙ YouTube · AI 설정`
+- 설정 패널에 `YouTube 인증` 섹션 복원 (API Key 입력)
+- `addChannel()` JS 함수 신규 추가 (POST /api/channels 호출)
+
+---
+
+## Phase 14 · 이중 스토리지 모드 (DB / 파일 자동 전환)
+
+**요청:** DB가 있으면 DB 사용, 없으면 파일 기반으로 동작
+
+### 신규 파일
+
+**`src/storage/store.py`** — 스위치 레이어
+```python
+store.init(use_db: bool)   # main.py 에서 DB 파일 존재 여부로 결정
+store.get_setting(key)     # DB 모드: app_settings 테이블 / 파일 모드: config.json
+store.set_setting(key, v)  # 동일
+store.set_settings_many()  # 일괄 저장
+store.save_summary()       # DB 모드: summaries 테이블 / 파일 모드: 채널/날짜 폴더
+store.save_video_summary() # 동일
+store.get_history()        # DB 모드: SQL JOIN / 파일 모드: rglob 파일 탐색
+```
+
+**`src/storage/config_store.py`** — 파일 모드 설정 (thread-safe JSON r/w)
+```
+data/config.json
+{
+  "ai":      { "provider": "...", "model": "...", "api_key": "...", "base_url": "" },
+  "youtube": { "api_key": "..." }
+}
+```
+
+**`src/storage/summary_store.py`** — 파일 모드 요약 저장
+```
+data/summaries/{channel_id}/{YYYY-MM-DD}/
+  {session_id}.json        ← 라이브 요약
+  video_{video_id}.json    ← 영상 요약
+```
+- `save_live_summary()`, `save_video_summary()`, `load_history()`, `cleanup_old_summaries()`
+- 10일 이상 된 날짜 폴더 자동 삭제 (startup 시 실행)
+
+### 변경 파일
+
+| 파일 | 변경 내용 |
+|---|---|
+| `main.py` | DB 파일 존재 여부 확인 → `store.init()` → 파일 모드 시 cleanup 실행 |
+| `server/app.py` | `/api/history` → `store.get_history()` / `PUT /api/settings` → `store.set_settings_many()` |
+| `scheduler/poller.py` | `db.save_summary` → `store.save_summary` / `db.save_video_summary` → `store.save_video_summary` |
+
+### 모드 판단 기준
+
+```python
+# main.py 시작 시
+use_db = Path(settings.db_path).exists()  # agent.db 파일 존재 여부
+store.init(use_db)
+```
+
+DB 테이블·함수는 완전히 보존 — DB 모드 동작은 기존과 동일.
+
+---
+
 ## 최종 아키텍처 요약
 
 ```
 main.py
+  ├─ DB 파일 존재 여부로 스토리지 모드 결정
+  │    DB 있음 → init_db() / DB 없음 → summary_store.cleanup_old_summaries()
   └─ asyncio.gather(FastAPI 서버, 폴링 루프)
+
+스토리지 모드
+  ├─ DB 모드  : 설정 → app_settings 테이블  / 요약 → summaries 테이블
+  └─ 파일 모드: 설정 → data/config.json     / 요약 → data/summaries/{채널}/{날짜}/
 
 폴링 루프 (기본 5분마다, .env POLL_INTERVAL_SECONDS 조정)
   ├─ 라이브 감지 → 채팅 수집 → 종료 시 요약 파이프라인
@@ -435,14 +510,14 @@ main.py
   2. 고유명사 3-pass 검증
      └─ Pass1 추출 → Pass2 DDG 검색 → Pass3 검증 + glossary
   3. 치환 후 map-reduce 요약 (80,000자/청크)
-  4. DB 저장 + WebSocket 브로드캐스트
+  4. store.save_summary() → DB 또는 채널/날짜 파일
 
 설정 관리 (모두 런타임 교체 가능, 재시작 불필요)
   ├─ YouTube API Key     → youtube_client._runtime_key
   ├─ AI Provider + Model → ai_client._config
   ├─ AI API Key          → ai_client._config
   └─ Custom Base URL     → ai_client._config["base_url"]
-  모두 SQLite app_settings 테이블에 영속화
+  DB 모드: SQLite app_settings / 파일 모드: data/config.json
 
 WebSocket 이벤트 타입
   live_start / chat_collected / live_end / summary_ready
@@ -458,9 +533,9 @@ WebSocket 이벤트 타입
 | POST | `/api/channels` | 채널 추가 (URL/@핸들/ID) |
 | DELETE | `/api/channels/{id}` | 채널 제거 |
 | GET | `/api/settings` | AI + YouTube 설정 조회 |
-| PUT | `/api/settings` | 설정 변경 + DB 저장 |
+| PUT | `/api/settings` | 설정 변경 (DB 또는 config.json에 저장) |
 | POST | `/api/summarize` | 영상 URL/ID 직접 요약 |
-| GET | `/api/history` | 과거 요약 히스토리 |
+| GET | `/api/history` | 과거 요약 히스토리 (DB 또는 파일) |
 | GET | `/api/live` | 현재 진행 중인 라이브 세션 |
 | WS | `/ws` | 실시간 이벤트 스트림 |
 
