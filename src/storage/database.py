@@ -89,6 +89,14 @@ async def init_db():
             );
         """)
         await db.commit()
+
+        # 마이그레이션: summaries 테이블에 one_liner 컬럼 추가
+        cols = {row[1] async for row in await db.execute("PRAGMA table_info(summaries)")}
+        if "one_liner" not in cols:
+            await db.execute("ALTER TABLE summaries ADD COLUMN one_liner TEXT")
+            await db.commit()
+            logger.info("DB migration: summaries.one_liner 추가")
+
     logger.info("DB initialized: %s", settings.db_path)
 
 
