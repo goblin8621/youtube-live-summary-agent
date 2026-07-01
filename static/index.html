@@ -193,19 +193,6 @@
     gap: 6px;
     margin-top: 4px;
   }
-  .validate-btn {
-    flex-shrink: 0;
-    padding: 3px 8px;
-    border-radius: 5px;
-    border: 1px solid var(--border);
-    background: var(--bg3);
-    color: var(--muted);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all .15s;
-  }
-  .validate-btn:hover { border-color: var(--blue); color: var(--blue); }
-  .validate-btn:disabled { opacity: .4; cursor: default; }
   .auth-badge {
     font-size: 11px;
     font-weight: 500;
@@ -655,9 +642,9 @@
         <div class="setting-section-label">YouTube 인증</div>
         <div class="setting-group">
           <div class="setting-label">API Key</div>
-          <input id="yt-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+          <input id="yt-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)"
+                 oninput="onYtKeyInput()" />
           <div class="validate-row">
-            <button class="validate-btn" id="yt-validate-btn" onclick="validateYoutube()">인증 확인</button>
             <span class="auth-badge" id="yt-auth-badge"></span>
           </div>
         </div>
@@ -684,9 +671,9 @@
         </div>
         <div class="setting-group">
           <div class="setting-label">API Key</div>
-          <input id="ai-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+          <input id="ai-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)"
+                 oninput="onAiKeyInput()" />
           <div class="validate-row">
-            <button class="validate-btn" id="ai-validate-btn" onclick="validateAi()">인증 확인</button>
             <span class="auth-badge" id="ai-auth-badge"></span>
           </div>
         </div>
@@ -1105,52 +1092,47 @@ function runDemo() {
 }
 
 /* ── Auth validation ── */
-async function validateYoutube() {
-  const btn   = document.getElementById('yt-validate-btn');
+let _ytKeyTimer = null;
+let _aiKeyTimer = null;
+
+function onYtKeyInput() {
+  clearTimeout(_ytKeyTimer);
+  const val   = document.getElementById('yt-apikey').value.trim();
   const badge = document.getElementById('yt-auth-badge');
-  btn.disabled = true;
+  if (!val) { badge.className = 'auth-badge'; badge.textContent = ''; return; }
   badge.className = 'auth-badge checking';
   badge.textContent = '확인 중...';
-  try {
-    const res  = await fetch('/api/validate/youtube');
-    const data = await res.json();
-    if (data.ok) {
-      badge.className = 'auth-badge ok';
-      badge.textContent = '✓ 인증됨';
-    } else {
+  _ytKeyTimer = setTimeout(async () => {
+    try {
+      const res  = await fetch('/api/validate/youtube');
+      const data = await res.json();
+      badge.className = data.ok ? 'auth-badge ok' : 'auth-badge err';
+      badge.textContent = data.ok ? '✓ 인증됨' : `✗ ${data.detail || '인증 실패'}`;
+    } catch {
       badge.className = 'auth-badge err';
-      badge.textContent = `✗ ${data.detail || '인증 실패'}`;
+      badge.textContent = '✗ 서버 오류';
     }
-  } catch {
-    badge.className = 'auth-badge err';
-    badge.textContent = '✗ 서버 오류';
-  } finally {
-    btn.disabled = false;
-  }
+  }, 800);
 }
 
-async function validateAi() {
-  const btn   = document.getElementById('ai-validate-btn');
+function onAiKeyInput() {
+  clearTimeout(_aiKeyTimer);
+  const val   = document.getElementById('ai-apikey').value.trim();
   const badge = document.getElementById('ai-auth-badge');
-  btn.disabled = true;
+  if (!val) { badge.className = 'auth-badge'; badge.textContent = ''; return; }
   badge.className = 'auth-badge checking';
   badge.textContent = '확인 중...';
-  try {
-    const res  = await fetch('/api/validate/ai');
-    const data = await res.json();
-    if (data.ok) {
-      badge.className = 'auth-badge ok';
-      badge.textContent = '✓ 인증됨';
-    } else {
+  _aiKeyTimer = setTimeout(async () => {
+    try {
+      const res  = await fetch('/api/validate/ai');
+      const data = await res.json();
+      badge.className = data.ok ? 'auth-badge ok' : 'auth-badge err';
+      badge.textContent = data.ok ? '✓ 인증됨' : `✗ ${data.detail || '인증 실패'}`;
+    } catch {
       badge.className = 'auth-badge err';
-      badge.textContent = `✗ ${data.detail || '인증 실패'}`;
+      badge.textContent = '✗ 서버 오류';
     }
-  } catch {
-    badge.className = 'auth-badge err';
-    badge.textContent = '✗ 서버 오류';
-  } finally {
-    btn.disabled = false;
-  }
+  }, 800);
 }
 
 /* ── Channel add ── */
