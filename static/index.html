@@ -159,6 +159,62 @@
     min-height: 16px;
   }
 
+  /* 채널 존재 확인 프리뷰 */
+  .ch-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    margin: 0 8px 6px;
+    border-radius: 7px;
+    background: rgba(34,197,94,.08);
+    border: 1px solid rgba(34,197,94,.2);
+    font-size: 12px;
+    color: var(--green);
+    display: none;
+  }
+  .ch-preview.error {
+    background: rgba(255,68,68,.08);
+    border-color: rgba(255,68,68,.2);
+    color: var(--red);
+  }
+  .ch-preview img {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .ch-preview-name { font-weight: 500; }
+  .ch-preview-sub  { color: var(--muted); font-size: 11px; margin-left: auto; }
+
+  /* 설정 인증 배지 */
+  .validate-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .validate-btn {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .validate-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .validate-btn:disabled { opacity: .4; cursor: default; }
+  .auth-badge {
+    font-size: 11px;
+    font-weight: 500;
+    display: none;
+  }
+  .auth-badge.ok  { color: var(--green); display: inline; }
+  .auth-badge.err { color: var(--red);   display: inline; }
+  .auth-badge.checking { color: var(--muted); display: inline; }
+
   #channel-list { overflow-y: auto; flex: 1; padding: 0 8px 8px; }
 
   .channel-item {
@@ -583,10 +639,16 @@
     <div class="ch-add-row">
       <input id="ch-add-input" class="ch-add-input" type="text"
              placeholder="채널 URL / @핸들 / ID"
+             oninput="onChInput()"
              onkeydown="if(event.key==='Enter') addChannel()" />
       <button class="ch-add-btn" id="ch-add-btn" onclick="addChannel()" title="채널 추가">+</button>
     </div>
     <div class="ch-add-status" id="ch-add-status"></div>
+    <div class="ch-preview" id="ch-preview">
+      <img id="ch-preview-thumb" src="" alt="" />
+      <span class="ch-preview-name" id="ch-preview-name"></span>
+      <span class="ch-preview-sub" id="ch-preview-sub"></span>
+    </div>
     <div id="channel-list"></div>
     <div class="aside-footer">
       <div class="settings-panel" id="settings-panel">
@@ -594,6 +656,10 @@
         <div class="setting-group">
           <div class="setting-label">API Key</div>
           <input id="yt-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+          <div class="validate-row">
+            <button class="validate-btn" id="yt-validate-btn" onclick="validateYoutube()">인증 확인</button>
+            <span class="auth-badge" id="yt-auth-badge"></span>
+          </div>
         </div>
         <div class="setting-divider"></div>
         <div class="setting-section-label">AI 모델</div>
@@ -619,6 +685,10 @@
         <div class="setting-group">
           <div class="setting-label">API Key</div>
           <input id="ai-apikey" class="setting-input" type="password" placeholder=".env 키 사용 (변경 시 입력)" />
+          <div class="validate-row">
+            <button class="validate-btn" id="ai-validate-btn" onclick="validateAi()">인증 확인</button>
+            <span class="auth-badge" id="ai-auth-badge"></span>
+          </div>
         </div>
         <button class="save-settings-btn" id="save-settings-btn" onclick="saveSettings()">저장</button>
         <div class="settings-status" id="settings-status"></div>
@@ -1034,7 +1104,108 @@ function runDemo() {
   });
 }
 
+/* ── Auth validation ── */
+async function validateYoutube() {
+  const btn   = document.getElementById('yt-validate-btn');
+  const badge = document.getElementById('yt-auth-badge');
+  btn.disabled = true;
+  badge.className = 'auth-badge checking';
+  badge.textContent = '확인 중...';
+  try {
+    const res  = await fetch('/api/validate/youtube');
+    const data = await res.json();
+    if (data.ok) {
+      badge.className = 'auth-badge ok';
+      badge.textContent = '✓ 인증됨';
+    } else {
+      badge.className = 'auth-badge err';
+      badge.textContent = `✗ ${data.detail || '인증 실패'}`;
+    }
+  } catch {
+    badge.className = 'auth-badge err';
+    badge.textContent = '✗ 서버 오류';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function validateAi() {
+  const btn   = document.getElementById('ai-validate-btn');
+  const badge = document.getElementById('ai-auth-badge');
+  btn.disabled = true;
+  badge.className = 'auth-badge checking';
+  badge.textContent = '확인 중...';
+  try {
+    const res  = await fetch('/api/validate/ai');
+    const data = await res.json();
+    if (data.ok) {
+      badge.className = 'auth-badge ok';
+      badge.textContent = '✓ 인증됨';
+    } else {
+      badge.className = 'auth-badge err';
+      badge.textContent = `✗ ${data.detail || '인증 실패'}`;
+    }
+  } catch {
+    badge.className = 'auth-badge err';
+    badge.textContent = '✗ 서버 오류';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ── Channel add ── */
+let _chCheckTimer = null;
+
+function onChInput() {
+  clearTimeout(_chCheckTimer);
+  const val = document.getElementById('ch-add-input').value.trim();
+  const preview = document.getElementById('ch-preview');
+  if (!val) { preview.style.display = 'none'; return; }
+  _chCheckTimer = setTimeout(() => checkChannelPreview(val), 600);
+}
+
+async function checkChannelPreview(val) {
+  const preview = document.getElementById('ch-preview');
+  const nameEl  = document.getElementById('ch-preview-name');
+  const subEl   = document.getElementById('ch-preview-sub');
+  const thumbEl = document.getElementById('ch-preview-thumb');
+
+  preview.className = 'ch-preview';
+  preview.style.display = 'flex';
+  nameEl.textContent = '확인 중...';
+  subEl.textContent = '';
+  thumbEl.src = '';
+
+  try {
+    const res  = await fetch('/api/channels/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: val }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      preview.className = 'ch-preview error';
+      nameEl.textContent = data.detail || '채널을 찾을 수 없음';
+      thumbEl.src = '';
+      subEl.textContent = '';
+      return;
+    }
+    const data = await res.json();
+    preview.className = 'ch-preview';
+    if (data.thumbnail_url) { thumbEl.src = data.thumbnail_url; thumbEl.style.display = ''; }
+    else thumbEl.style.display = 'none';
+    nameEl.textContent = data.title;
+    subEl.textContent  = data.subscriber_count
+      ? `구독자 ${(data.subscriber_count/10000).toFixed(1)}만`
+      : '';
+  } catch {
+    preview.className = 'ch-preview error';
+    nameEl.textContent = '서버 연결 오류';
+    thumbEl.src = '';
+    subEl.textContent = '';
+  }
+}
+
 async function addChannel() {
   const input = document.getElementById('ch-add-input');
   const btn   = document.getElementById('ch-add-btn');
@@ -1060,6 +1231,7 @@ async function addChannel() {
       status.style.color = 'var(--green)';
       status.textContent = `✓ ${data.title} 추가됨`;
       input.value = '';
+      document.getElementById('ch-preview').style.display = 'none';
       setTimeout(() => { status.textContent = ''; }, 3000);
     }
   } catch(e) {

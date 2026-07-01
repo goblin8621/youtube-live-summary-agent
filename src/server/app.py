@@ -123,6 +123,78 @@ async def update_settings(req: SettingsUpdateRequest):
     return await get_settings()
 
 
+# ── 인증 검증 API ─────────────────────────────────────────
+
+@app.get("/api/validate/youtube")
+async def validate_youtube():
+    """YouTube API 키 유효성 검사."""
+    try:
+        resp = youtube_client.get_client().channels().list(
+            part="id", id="UCVHFbw7woebKtRljuCGF-ug", maxResults=1
+        ).execute()
+        return {"ok": True}
+    except HttpError as e:
+        code = e.resp.status
+        if code == 403:
+            return {"ok": False, "detail": "키가 유효하지 않거나 API가 비활성화됨"}
+        if code == 400:
+            return {"ok": False, "detail": "잘못된 요청 (키 형식 확인)"}
+        return {"ok": False, "detail": f"YouTube API 오류 ({code})"}
+    except Exception as e:
+        return {"ok": False, "detail": "API 키 미설정"}
+
+
+@app.get("/api/validate/ai")
+async def validate_ai():
+    """AI API 키 유효성 검사 (최소 호출로 인증 확인)."""
+    loop = asyncio.get_event_loop()
+    try:
+        def _test():
+            ai_client.chat(system="", user="hi", max_tokens=1)
+        await loop.run_in_executor(None, _test)
+        return {"ok": True}
+    except Exception as e:
+        msg = str(e)
+        if "401" in msg or "authentication" in msg.lower() or "api_key" in msg.lower() or "invalid" in msg.lower() or "permission" in msg.lower():
+            return {"ok": False, "detail": "API 키가 유효하지 않음"}
+        if "model" in msg.lower() or "404" in msg:
+            return {"ok": False, "detail": "모델명 확인 필요"}
+        if "base_url" in msg.lower() or "connection" in msg.lower():
+            return {"ok": False, "detail": "서버 연결 실패 (Base URL 확인)"}
+        return {"ok": False, "detail": msg[:80]}
+
+
+class ChannelCheckRequest(BaseModel):
+    input: str
+
+
+@app.post("/api/channels/check")
+async def check_channel(req: ChannelCheckRequest):
+    """채널 존재 여부만 확인 (추가하지 않음)."""
+    channel_id = _resolve_channel_id(req.input)
+    if not channel_id:
+        raise HTTPException(status_code=404, detail="채널을 찾을 수 없습니다")
+    try:
+        resp = youtube_client.get_client().channels().list(
+            part="snippet,statistics",
+            id=channel_id,
+            fields="items(id,snippet(title,thumbnails),statistics(subscriberCount))",
+        ).execute()
+        items = resp.get("items", [])
+        if not items:
+            raise HTTPException(status_code=404, detail="채널 정보를 가져올 수 없습니다")
+        snippet = items[0]["snippet"]
+        stats   = items[0].get("statistics", {})
+        return {
+            "channel_id": channel_id,
+            "title": snippet.get("title", ""),
+            "thumbnail_url": snippet.get("thumbnails", {}).get("default", {}).get("url", ""),
+            "subscriber_count": int(stats.get("subscriberCount", 0)),
+        }
+    except HttpError as e:
+        raise HTTPException(status_code=502, detail=f"YouTube API 오류: {e}")
+
+
 # ── 채널 관리 API ──────────────────────────────────────────
 
 @app.get("/api/channels")
